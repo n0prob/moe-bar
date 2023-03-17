@@ -1,0 +1,72 @@
+---
+- name: Install Python 3.9, Docker, and PostgreSQL on CentOS 7
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    ansible_python_interpreter: /usr/bin/python
+
+  tasks:
+    - name: Install EPEL repository
+      yum:
+        name: epel-release
+        state: present
+
+    - name: Install required packages for Python 3.9 installation
+      yum:
+        name:
+          - gcc
+          - openssl-devel
+          - bzip2-devel
+          - libffi-devel
+          - zlib-devel
+        state: present
+
+    - name: Download Python 3.9.6
+      get_url:
+        url: https://www.python.org/ftp/python/3.9.6/Python-3.9.6.tgz
+        dest: /tmp/Python-3.9.6.tgz
+
+    - name: Extract Python 3.9.6
+      unarchive:
+        src: /tmp/Python-3.9.6.tgz
+        dest: /tmp
+        remote_src: yes
+
+    - name: Configure and install Python 3.9.6
+      command: "{{ item }}"
+      args:
+        chdir: /tmp/Python-3.9.6
+      with_items:
+        - ./configure --enable-optimizations
+        - make
+        - make altinstall
+
+    - name: Install Docker
+      yum:
+        name: docker
+        state: present
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Install PostgreSQL
+      yum:
+        name:
+          - postgresql-server
+          - postgresql-contrib
+        state: present
+
+    - name: Initialize PostgreSQL
+      command: postgresql-setup initdb
+
+    - name: Start and enable PostgreSQL
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+...
+
