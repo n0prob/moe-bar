@@ -68,5 +68,17 @@
         name: postgresql
         state: started
         enabled: yes
+
+    - name: Build Docker image
+      command: docker build -t hex-dashboard .
+      delegate_to: localhost
+
+    - name: Run Docker container
+      docker_container:
+        name: hex-dashboard
+        image: hex-dashboard
+        state: started
+        recreate: yes
+
 ...
 
