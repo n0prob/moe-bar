@@ -4,13 +4,14 @@
   become: yes
   gather_facts: no
   vars:
-    ansible_python_interpreter: /usr/bin/python
+    ansible_python_interpreter: /usr/local/bin/python3.9
 
   tasks:
-    - name: Install EPEL repository
-      yum:
-        name: epel-release
-        state: present
+    - name: Check if Python 3.9 is installed
+      command: python3.9 -V 2>&1
+      register: python_installed
+      failed_when: false
+      changed_when: false
 
     - name: Install required packages for Python 3.9 installation
       yum:
@@ -26,12 +27,14 @@
       get_url:
         url: https://www.python.org/ftp/python/3.9.6/Python-3.9.6.tgz
         dest: /tmp/Python-3.9.6.tgz
+      when: "'Python 3.9.' not in python_installed.stdout | default('')"
 
     - name: Extract Python 3.9.6
       unarchive:
         src: /tmp/Python-3.9.6.tgz
         dest: /tmp
         remote_src: yes
+      when: "'Python 3.9.' not in python_installed.stdout | default('')"
 
     - name: Configure and install Python 3.9.6
       command: "{{ item }}"
@@ -41,6 +44,37 @@
         - ./configure --enable-optimizations
         - make
         - make altinstall
+      when: "'Python 3.9.' not in python_installed.stdout | default('')"
+
+    - name: Set Python 3.9 as the default interpreter
+      set_fact:
+        ansible_python_interpreter: /usr/local/bin/python3.9
+      when: "'Python 3.9.' in python_installed.stdout | default('')"
+
+    - name: Install EPEL repository
+      yum:
+        name: epel-release
+        state: present
+        use_backend: yum
+
+    - name: Install pip for Python 3.9
+      shell: /usr/local/bin/python3.9 -m ensurepip
+
+    - name: Upgrade pip for Python 3.9
+      shell: /usr/local/bin/python3.9 -m pip install --upgrade pip
+
+    - name: Install Python libraries
+      pip:
+        name:
+          - "requests"
+        state: present
+        executable: /usr/local/bin/pip3.9
+
+    - name: Install Python libraries for Python 3.9
+      ansible.builtin.pip:
+        name:
+          - requests
+        executable: /usr/local/bin/pip3.9
 
     - name: Install Docker
       yum:
@@ -62,6 +96,8 @@
 
     - name: Initialize PostgreSQL
       command: postgresql-setup initdb
+      args:
+        creates: /var/lib/pgsql/data/PG_VERSION
 
     - name: Start and enable PostgreSQL
       systemd:
@@ -69,16 +105,111 @@
         state: started
         enabled: yes
 
-    - name: Build Docker image
-      command: docker build -t hex-dashboard .
-      delegate_to: localhost
+    - name: Create Docker network for webapp
+      docker_network:
+        name: webapp_network
+        state: present
+      register: network_created
+      vars:
+        ansible_python_interpreter: /usr/local/bin/python3.9
 
-    - name: Run Docker container
-      docker_container:
-        name: hex-dashboard
-        image: hex-dashboard
+    - name: Install requests Python library for Python 3.9
+      ansible.builtin.pip:
+        name: requests
+        state: present
+        executable: /usr/local/bin/pip3.9
+
+    - name: Set file permissions for web content on control machine
+      ansible.builtin.file:
+        path: "/Users/mike/moe/web"
+        mode: "u=rwX,g=rX,o=rX"
+        recurse: yes
+
+    - name: Install rsync
+      yum:
+        name: rsync
+        state: present
+
+    - name: Create playbook_dir on remote host
+      ansible.builtin.file:
+        path: "/tmp/playbook_dir"
+        state: directory
+        mode: "0755"
+
+    - name: Copy Dockerfile to remote host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/Dockerfile"
+        dest: "/tmp/playbook_dir/Dockerfile"
+
+    - name: Copy default.conf to remote host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/default.conf"
+        dest: "/tmp/playbook_dir/default.conf"
+
+    - name: Check if custom NGINX Docker image exists
+      docker_image_info:
+        name: custom_nginx
+      register: custom_nginx_image_info
+
+    - name: Ensure the NGINX web directory exists
+      file:
+        path: /usr/share/nginx/html
+        state: directory
+        mode: "0755"
+      become: yes
+      become_user: root
+
+    - name: Copy web content to remote host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/web/"
+        dest: "/tmp/playbook_dir/web/"
+        mode: "u=rwX,g=rX,o=rX"
+        directory_mode: "u=rwx,g=rx,o=rx"
+
+    - name: Copy web content to the correct directory
+      synchronize:
+        src: "{{ playbook_dir }}/web/"
+        dest: "/usr/share/nginx/html/"
+        delete: yes
+        recursive: yes
+      become: yes
+      become_user: root
+
+    - name: Set file permissions for web content on remote host
+      ansible.builtin.file:
+        path: "/tmp/playbook_dir/web"
+        mode: "u=rwX,g=rX,o=rX"
+        recurse: yes
+
+    - name: Check if Dockerfile has changed
+      ansible.builtin.stat:
+        path: "/tmp/playbook_dir/Dockerfile"
+      register: remote_dockerfile_stat
+
+    - name: Check if default.conf has changed
+      ansible.builtin.stat:
+        path: "/tmp/playbook_dir/default.conf"
+      register: remote_default_conf_stat
+
+    - name: Build custom NGINX Docker image
+      docker_image:
+          build:
+              path: "/tmp/playbook_dir"
+              dockerfile: Dockerfile
+          name: custom_nginx
+          source: build
+      when: >
+        custom_nginx_image_info.images | length == 0 or
+        (custom_nginx_image_info.images[0].ContainerConfig.Cmd | length == 0 and
+        (remote_dockerfile_stat.stat.islnk is defined or remote_default_conf_stat.stat.islnk is defined))
+
+    - name: Run custom NGINX Docker container
+      ansible.builtin.docker_container:
+        name: custom_nginx_container
+        image: custom_nginx
         state: started
-        recreate: yes
-
-...
-
+        ports:
+          - "80:80"
+        volumes:
+          - "/usr/share/nginx/html/:/usr/share/nginx/html:ro"
+      become: yes

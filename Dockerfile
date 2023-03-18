@@ -1,7 +1,7 @@
-FROM nginx:alpine
+FROM nginx:latest
 
-COPY web/html /usr/share/nginx/html
-COPY web/css /usr/share/nginx/html/css
-COPY web/js /usr/share/nginx/html/js
-COPY web/images /usr/share/nginx/html/images
+COPY web /usr/share/nginx/html
+COPY default.conf /etc/nginx/conf.d/default.conf
+
+RUN chmod -R 755 /usr/share/nginx/html
 
