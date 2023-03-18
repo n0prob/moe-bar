@@ -28,8 +28,7 @@ This project automates the deployment of a custom NGINX web server using Ansible
 1. Run the Ansible playbook with the following command:
 
 ```python
-# This is the first code snippet
-print("ansible-playbook -i hosts.ini main.yml")
+ansible-playbook -i hosts.ini main.yml
 ```
 
 2. After the playbook finishes running, you should be able to access the web server by navigating to the remote server's IP address or domain name in your web browser.
